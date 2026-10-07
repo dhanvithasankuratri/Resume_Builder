@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resume Builder Pro</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f3f4f6; color: #111; }
+  header { background: #1e293b; color: #fff; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+  .wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 20px; max-width: 1200px; margin: auto; }
+  @media (max-width: 800px) { .wrap { grid-template-columns: 1fr; } }
+  .card { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 1px 3px #0002; margin-bottom: 16px; }
+  h2 { margin-top: 0; font-size: 18px; }
+  input, textarea { width: 100%; padding: 8px; margin: 4px 0 10px; border: 1px solid #cbd5e1; border-radius: 6px; font: inherit; }
+  textarea { min-height: 70px; }
+  button { background: #2563eb; color: #fff; border: 0; padding: 8px 14px; border-radius: 6px; cursor: pointer; margin-right: 6px; }
+  button.red { background: #dc2626; } button.gray { background: #64748b; }
+  #authBox { max-width: 380px; margin: 60px auto; }
+  #authMsg { color: #dc2626; font-size: 14px; }
+  #preview h1 { margin: 0; font-size: 24px; } #preview h3 { border-bottom: 2px solid #1e293b; margin: 16px 0 6px; font-size: 14px; text-transform: uppercase; }
+  #preview p { white-space: pre-wrap; margin: 4px 0; font-size: 14px; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; margin: 2px; }
+  .ok { background: #dcfce7; } .miss { background: #fee2e2; }
+  .saved { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #e5e7eb; }
+  .hidden { display: none; }
+  @media print { header, .left { display: none; } .wrap { display: block; } .card { box-shadow: none; } }
+</style>
+</head>
+<body>
+<header><b>Resume Builder Pro</b><span id="who"></span></header>
+
+<!-- Login / Register -->
+<div id="authBox" class="card">
+  <h2>Login or Register</h2>
+  <input id="aEmail" type="email" placeholder="Email">
+  <input id="aPass" type="password" placeholder="Password (6+ chars)">
+  <button onclick="auth('login')">Login</button>
+  <button class="gray" onclick="auth('register')">Register</button>
+  <p id="authMsg"></p>
+</div>
+
+<!-- Main app -->
+<div id="app" class="wrap hidden">
+  <div class="left">
+    <div class="card">
+      <h2>Your Details</h2>
+      <input id="name" placeholder="Full name *">
+      <input id="email" placeholder="Email">
+      <input id="phone" placeholder="Phone">
+      <textarea id="summary" placeholder="Career objective / summary"></textarea>
+      <input id="skills" placeholder="Skills (comma separated)">
+      <textarea id="education" placeholder="Education"></textarea>
+      <textarea id="projects" placeholder="Projects"></textarea>
+      <textarea id="experience" placeholder="Experience / Internships"></textarea>
+      <button onclick="save()">Save</button>
+      <button class="gray" onclick="window.print()">Download PDF</button>
+      <button class="gray" onclick="resetForm()">New</button>
+    </div>
+    <div class="card"><h2>My Resumes</h2><div id="list"></div></div>
+    <div class="card">
+      <h2>ATS Score Checker</h2>
+      <textarea id="jd" placeholder="Paste the job description here"></textarea>
+      <button onclick="checkATS()">Check Score</button>
+      <div id="ats"></div>
+    </div>
+  </div>
+  <div class="card" id="preview"></div>
+</div>
+
+<script>
+const F = ['name','email','phone','summary','skills','education','projects','experience'];
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let currentId = null;
+
+// Wrapper that adds the JWT to every request and handles expired sessions
+async function api(url, method = 'GET', body) {
+  const res = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('token') },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await res.json();
+  if (res.status === 401 && url !== '/api/auth/login') { logout(); }
+  if (!res.ok) throw new Error(data.error || 'Something went wrong');
+  return data;
+}
+
+async function auth(mode) {
+  try {
+    const d = await api('/api/auth/' + mode, 'POST', { email: $('aEmail').value.trim(), password: $('aPass').value });
+    localStorage.setItem('token', d.token); localStorage.setItem('email', d.email);
+    showApp();
+  } catch (e) { $('authMsg').textContent = e.message; }
+}
+
+function logout() { localStorage.clear(); location.reload(); }
+
+function showApp() {
+  const logged = !!localStorage.getItem('token');
+  $('authBox').classList.toggle('hidden', logged);
+  $('app').classList.toggle('hidden', !logged);
+  $('who').innerHTML = logged ? `${esc(localStorage.getItem('email'))} <button class="gray" onclick="logout()">Logout</button>` : '';
+  if (logged) { render(); loadList(); }
+}
+
+const getData = () => Object.fromEntries(F.map(f => [f, $(f).value.trim()]));
+
+function render() {
+  const d = getData();
+  const sec = (t, v) => v ? `<h3>${t}</h3><p>${esc(v)}</p>` : '';
+  $('preview').innerHTML = `<h1>${esc(d.name) || 'Your Name'}</h1><p>${esc(d.email)} ${d.phone ? '| ' + esc(d.phone) : ''}</p>` +
+    sec('Summary', d.summary) + sec('Skills', d.skills) + sec('Education', d.education) + sec('Projects', d.projects) + sec('Experience', d.experience);
+}
+F.forEach(f => $(f).addEventListener('input', render));
+
+async function save() {
+  try {
+    const d = currentId ? await api('/api/resumes/' + currentId, 'PUT', getData()) : await api('/api/resumes', 'POST', getData());
+    currentId = d.id; loadList();
+  } catch (e) { alert(e.message); }
+}
+
+async function loadList() {
+  const all = await api('/api/resumes');
+  window._all = all;
+  $('list').innerHTML = all.length ? all.map(r =>
+    `<div class="saved"><span>${esc(r.title)}</span><span><button onclick="openOne(${r.id})">Open</button><button class="red" onclick="del(${r.id})">Delete</button></span></div>`
+  ).join('') : 'Nothing saved yet.';
+}
+
+function openOne(id) {
+  const r = window._all.find(x => x.id === id);
+  F.forEach(f => $(f).value = r[f] || '');
+  currentId = id; render();
+}
+
+async function del(id) { await api('/api/resumes/' + id, 'DELETE'); if (currentId === id) resetForm(); loadList(); }
+function resetForm() { F.forEach(f => $(f).value = ''); currentId = null; render(); }
+
+async function checkATS() {
+  try {
+    const d = await api('/api/ats-score', 'POST', { resume: getData(), jobDescription: $('jd').value });
+    $('ats').innerHTML = `<h2>${d.score}% match</h2>
+      <p><b>Matched:</b><br>${d.matched.map(w => `<span class="tag ok">${esc(w)}</span>`).join('')}</p>
+      <p><b>Missing (add if true for you):</b><br>${d.missing.map(w => `<span class="tag miss">${esc(w)}</span>`).join('')}</p>`;
+  } catch (e) { alert(e.message); }
+}
+
+showApp();
+</script>
+</body>
+</html>
